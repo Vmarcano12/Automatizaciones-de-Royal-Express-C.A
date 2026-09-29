@@ -1,0 +1,657 @@
+{
+  "name": "Respaldo Diario - OneDrive Individuales a OneDrive De Respaldo General",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,size,file,folder,lastModifiedDateTime,parentReference",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "options": {}
+      },
+      "id": "56f88a68-e3db-4a5b-9f34-3830cc911bf0",
+      "name": "OneDrive C1 - Listar Metadatos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -928,
+        128
+      ],
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "X0AGsDN5fUviK1aW",
+          "name": "Microsoft Drive account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// =========================================================================\n// MODO DE RESPALDO:\n// true  = RESPALDO COMPLETO INICIAL (Sube TODOS los archivos que existan).\n// false = RESPALDO DIARIO INCREMENTAL (Solo sube lo modificado en las últimas 24h).\n// =========================================================================\nconst RESPALDO_COMPLETO_INICIAL = false;\n\nconst ahora = new Date();\nconst limite24h = new Date(ahora.getTime() - (24 * 60 * 60 * 1000));\n\nlet listaArchivos = [];\nfor (const item of items) {\n  const data = item.json;\n  if (data && Array.isArray(data.value)) {\n    listaArchivos = listaArchivos.concat(data.value);\n  } else if (data && data.id) {\n    listaArchivos.push(data);\n  }\n}\n\nconst archivosValidos = listaArchivos.filter(f => f.file && f.id);\n\nlet modificados = [];\nif (RESPALDO_COMPLETO_INICIAL) {\n  modificados = archivosValidos;\n} else {\n  modificados = archivosValidos.filter(f => {\n    if (!f.lastModifiedDateTime) return false;\n    const fechaMod = new Date(f.lastModifiedDateTime);\n    return fechaMod >= limite24h;\n  });\n}\n\nif (modificados.length === 0) {\n  return [{ json: { hayArchivos: false, totalModificados: 0, cuenta: 'MTTO' } }];\n}\n\nreturn modificados.map(f => {\n  let rutaRelativa = f.name;\n  if (f.parentReference && f.parentReference.path) {\n    const partes = f.parentReference.path.split(':');\n    if (partes.length > 1 && partes[1]) {\n      const carpeta = partes[1].replace(/^\\/+/, '');\n      if (carpeta) {\n        rutaRelativa = `${carpeta}/${f.name}`;\n      }\n    }\n  }\n  return {\n    json: {\n      id: f.id,\n      name: f.name,\n      size: f.size,\n      lastModifiedDateTime: f.lastModifiedDateTime,\n      rutaDestino: rutaRelativa,\n      cuenta: 'MTTO',\n      hayArchivos: true\n    }\n  };\n});"
+      },
+      "id": "f9e35d1a-b613-4a1f-92f4-3fa82627ab38",
+      "name": "C1 - Filtro (MTTO)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -704,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cond-c1",
+              "leftValue": "={{ $json.hayArchivos }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bbc7c0b8-6c4f-4093-9234-f61a0972dbed",
+      "name": "C1 - ¿Hay Archivos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -480,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "c025a637-09fa-478a-829c-d1323c729103",
+      "name": "C1 - Lote 1x1 (Control RAM)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -256,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": "={{ $json.id }}"
+      },
+      "id": "3cf8b98f-5088-48b5-a9f7-c39776fada7c",
+      "name": "C1 - Descargar Binario",
+      "type": "n8n-nodes-base.microsoftOneDrive",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        128
+      ],
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "X0AGsDN5fUviK1aW",
+          "name": "Microsoft Drive account 4"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://graph.microsoft.com/v1.0/me/drive/root:/joelmtto%20respaldo/{{ $('C1 - Lote 1x1 (Control RAM)').item.json.rutaDestino.split('/').map(function(s){ return encodeURIComponent(s); }).join('/') }}:/content",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "63940043-9695-4578-ace8-b1e4bad6ff63",
+      "name": "C1 - Subir a OneDrive Central",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        128
+      ],
+      "retryOnFail": true,
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "Zs44uKKHqBLCFq4K",
+          "name": "Microsoft Drive account 3"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,size,file,folder,lastModifiedDateTime,parentReference",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "options": {}
+      },
+      "id": "cf2791e8-f352-4192-a479-eb9740d23fca",
+      "name": "OneDrive C2 - Listar Metadatos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -928,
+        352
+      ],
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "p5gynogafbKefGYb",
+          "name": "Microsoft Drive account 5"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cond-c2",
+              "leftValue": "={{ $json.hayArchivos }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8db49ac7-c2a5-4be6-9cdb-393d888fde4a",
+      "name": "C2 - ¿Hay Archivos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -480,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "86b659c0-803b-4ee1-a3f9-04b285bdba4d",
+      "name": "C2 - Lote 1x1 (Control RAM)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -256,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": "={{ $json.id }}"
+      },
+      "id": "cb6e0225-b411-4111-8ec9-942bb702d2cf",
+      "name": "C2 - Descargar Binario",
+      "type": "n8n-nodes-base.microsoftOneDrive",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        352
+      ],
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "p5gynogafbKefGYb",
+          "name": "Microsoft Drive account 5"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://graph.microsoft.com/v1.0/me/drive/root:/carver%20respaldo/{{ $('C2 - Lote 1x1 (Control RAM)').item.json.rutaDestino.split('/').map(function(s){ return encodeURIComponent(s); }).join('/') }}:/content",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "35cad508-910e-4fd0-ad5d-44061376f302",
+      "name": "C2 - Subir a OneDrive Central",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        352
+      ],
+      "retryOnFail": true,
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "Zs44uKKHqBLCFq4K",
+          "name": "Microsoft Drive account 3"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// =========================================================================\n// MODO DE RESPALDO:\n// true  = RESPALDO COMPLETO INICIAL (Sube TODOS los archivos que existan).\n// false = RESPALDO DIARIO INCREMENTAL (Solo sube lo modificado en las últimas 24h).\n// =========================================================================\nconst RESPALDO_COMPLETO_INICIAL = false;\n\nconst ahora = new Date();\nconst limite24h = new Date(ahora.getTime() - (24 * 60 * 60 * 1000));\n\nlet listaArchivos = [];\nfor (const item of items) {\n  const data = item.json;\n  if (data && Array.isArray(data.value)) {\n    listaArchivos = listaArchivos.concat(data.value);\n  } else if (data && data.id) {\n    listaArchivos.push(data);\n  }\n}\n\nconst archivosValidos = listaArchivos.filter(f => f.file && f.id);\n\nlet modificados = [];\nif (RESPALDO_COMPLETO_INICIAL) {\n  modificados = archivosValidos;\n} else {\n  modificados = archivosValidos.filter(f => {\n    if (!f.lastModifiedDateTime) return false;\n    const fechaMod = new Date(f.lastModifiedDateTime);\n    return fechaMod >= limite24h;\n  });\n}\n\nif (modificados.length === 0) {\n  return [{ json: { hayArchivos: false, totalModificados: 0, cuenta: 'ADMINISTRACION' } }];\n}\n\nreturn modificados.map(f => {\n  let rutaRelativa = f.name;\n  if (f.parentReference && f.parentReference.path) {\n    const partes = f.parentReference.path.split(':');\n    if (partes.length > 1 && partes[1]) {\n      const carpeta = partes[1].replace(/^\\/+/, '');\n      if (carpeta) {\n        rutaRelativa = `${carpeta}/${f.name}`;\n      }\n    }\n  }\n  return {\n    json: {\n      id: f.id,\n      name: f.name,\n      size: f.size,\n      lastModifiedDateTime: f.lastModifiedDateTime,\n      rutaDestino: rutaRelativa,\n      cuenta: 'ADMINISTRACION',\n      hayArchivos: true\n    }\n  };\n});"
+      },
+      "id": "df18eea1-46bf-47e9-84cd-6a3f174a17de",
+      "name": "C2 - Filtro Carlos V",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -704,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */5 * * *"
+            }
+          ]
+        }
+      },
+      "id": "e5b20826-4058-4d58-951b-48afcedbcd88",
+      "name": "Schedule Trigger - Cada 5 Horas",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1280,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://graph.microsoft.com/v1.0/me/drive/root/delta?$select=id,name,size,file,folder,lastModifiedDateTime,parentReference",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "options": {}
+      },
+      "id": "a349224a-dea9-4cc8-8291-0dc80484c85d",
+      "name": "OneDrive C2 - Listar Metadatos1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -928,
+        560
+      ],
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "l0dyNg4uOx4fpwIb",
+          "name": "Microsoft Drive account 6"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cond-c2",
+              "leftValue": "={{ $json.hayArchivos }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d18b6719-3208-4afc-a87b-b70e69422a77",
+      "name": "C2 - ¿Hay Archivos?1",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -480,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "47cda27a-5b02-4cea-a66c-27e5f6045584",
+      "name": "C2 - Lote 1x1 (Control RAM)1",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -256,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": "={{ $json.id }}"
+      },
+      "id": "8d2aa3d9-e188-469a-9d5e-65757095b108",
+      "name": "C2 - Descargar Binario1",
+      "type": "n8n-nodes-base.microsoftOneDrive",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        560
+      ],
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "l0dyNg4uOx4fpwIb",
+          "name": "Microsoft Drive account 6"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://graph.microsoft.com/v1.0/me/drive/root:/admo%20respaldo/{{ $('C2 - Lote 1x1 (Control RAM)1').item.json.rutaDestino.split('/').map(function(s){ return encodeURIComponent(s); }).join('/') }}:/content",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "microsoftOneDriveOAuth2Api",
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "d6cf5dc4-ebd5-493d-a5c9-13a44b74336c",
+      "name": "C2 - Subir a OneDrive Central1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        560
+      ],
+      "retryOnFail": true,
+      "credentials": {
+        "microsoftOneDriveOAuth2Api": {
+          "id": "Zs44uKKHqBLCFq4K",
+          "name": "Microsoft Drive account 3"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// =========================================================================\n// MODO DE RESPALDO:\n// true  = RESPALDO COMPLETO INICIAL (Sube TODOS los archivos que existan).\n// false = RESPALDO DIARIO INCREMENTAL (Solo sube lo modificado en las últimas 24h).\n// =========================================================================\nconst RESPALDO_COMPLETO_INICIAL = false;\n\nconst ahora = new Date();\nconst limite24h = new Date(ahora.getTime() - (24 * 60 * 60 * 1000));\n\nlet listaArchivos = [];\nfor (const item of items) {\n  const data = item.json;\n  if (data && Array.isArray(data.value)) {\n    listaArchivos = listaArchivos.concat(data.value);\n  } else if (data && data.id) {\n    listaArchivos.push(data);\n  }\n}\n\nconst archivosValidos = listaArchivos.filter(f => f.file && f.id);\n\nlet modificados = [];\nif (RESPALDO_COMPLETO_INICIAL) {\n  modificados = archivosValidos;\n} else {\n  modificados = archivosValidos.filter(f => {\n    if (!f.lastModifiedDateTime) return false;\n    const fechaMod = new Date(f.lastModifiedDateTime);\n    return fechaMod >= limite24h;\n  });\n}\n\nif (modificados.length === 0) {\n  return [{ json: { hayArchivos: false, totalModificados: 0, cuenta: 'ADMINISTRACION' } }];\n}\n\nreturn modificados.map(f => {\n  let rutaRelativa = f.name;\n  if (f.parentReference && f.parentReference.path) {\n    const partes = f.parentReference.path.split(':');\n    if (partes.length > 1 && partes[1]) {\n      const carpeta = partes[1].replace(/^\\/+/, '');\n      if (carpeta) {\n        rutaRelativa = `${carpeta}/${f.name}`;\n      }\n    }\n  }\n  return {\n    json: {\n      id: f.id,\n      name: f.name,\n      size: f.size,\n      lastModifiedDateTime: f.lastModifiedDateTime,\n      rutaDestino: rutaRelativa,\n      cuenta: 'ADMINISTRACION',\n      hayArchivos: true\n    }\n  };\n});"
+      },
+      "id": "3b813b38-4a22-4056-9b06-0fbe3e38fd39",
+      "name": "C2 - Filtro Admon Royal",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -704,
+        560
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "OneDrive C1 - Listar Metadatos": {
+      "main": [
+        [
+          {
+            "node": "C1 - Filtro (MTTO)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C1 - Filtro (MTTO)": {
+      "main": [
+        [
+          {
+            "node": "C1 - ¿Hay Archivos?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C1 - ¿Hay Archivos?": {
+      "main": [
+        [
+          {
+            "node": "C1 - Lote 1x1 (Control RAM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C1 - Lote 1x1 (Control RAM)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "C1 - Descargar Binario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C1 - Descargar Binario": {
+      "main": [
+        [
+          {
+            "node": "C1 - Subir a OneDrive Central",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C1 - Subir a OneDrive Central": {
+      "main": [
+        [
+          {
+            "node": "C1 - Lote 1x1 (Control RAM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OneDrive C2 - Listar Metadatos": {
+      "main": [
+        [
+          {
+            "node": "C2 - Filtro Carlos V",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C2 - ¿Hay Archivos?": {
+      "main": [
+        [
+          {
+            "node": "C2 - Lote 1x1 (Control RAM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C2 - Lote 1x1 (Control RAM)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "C2 - Descargar Binario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C2 - Descargar Binario": {
+      "main": [
+        [
+          {
+            "node": "C2 - Subir a OneDrive Central",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C2 - Subir a OneDrive Central": {
+      "main": [
+        [
+          {
+            "node": "C2 - Lote 1x1 (Control RAM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C2 - Filtro Carlos V": {
+      "main": [
+        [
+          {
+            "node": "C2 - ¿Hay Archivos?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger - Cada 5 Horas": {
+      "main": [
+        [
+          {
+            "node": "OneDrive C1 - Listar Metadatos",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "OneDrive C2 - Listar Metadatos",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "OneDrive C2 - Listar Metadatos1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OneDrive C2 - Listar Metadatos1": {
+      "main": [
+        [
+          {
+            "node": "C2 - Filtro Admon Royal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C2 - ¿Hay Archivos?1": {
+      "main": [
+        [
+          {
+            "node": "C2 - Lote 1x1 (Control RAM)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C2 - Lote 1x1 (Control RAM)1": {
+      "main": [
+        [],
+        [
+          {
+            "node": "C2 - Descargar Binario1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C2 - Descargar Binario1": {
+      "main": [
+        [
+          {
+            "node": "C2 - Subir a OneDrive Central1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C2 - Subir a OneDrive Central1": {
+      "main": [
+        [
+          {
+            "node": "C2 - Lote 1x1 (Control RAM)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "C2 - Filtro Admon Royal": {
+      "main": [
+        [
+          {
+            "node": "C2 - ¿Hay Archivos?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "dcc7a647-823c-48c0-8703-702a5de99c67",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cf02f58d2cb21330dda786fb9d94673e44ff1f001531ba946012fa3fe90e148f"
+  },
+  "nodeGroups": [],
+  "id": "JypyML7wdyOHKIhG",
+  "tags": []
+}
